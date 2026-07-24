@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sys
-
 from .grading import (
     CURSOR_CONFIG_KEY,
     fail_cards_now,
@@ -40,7 +38,3 @@ __all__ = [
 ]
 
 __version__ = "0.1.0"
-
-# AnkiWeb installs add-ons under numeric package names. Register a stable alias
-# so dependent add-ons can import this API after the utility add-on has loaded.
-sys.modules.setdefault("anki_safe_collection_operations", sys.modules[__name__])

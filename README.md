@@ -48,6 +48,21 @@ The result explicitly lists preserved suspension and burial. Clients should
 tell the user and offer `make_cards_available`, which removes the hidden state
 without erasing the recorded failure.
 
+## Library first, optional desktop bridge
+
+The repository has two deliberately separate roles:
+
+1. `safe_collection_operations/` is the transport-free Python library. It is
+   source-vendored by add-ons such as Chat With Your Cards and installed from a
+   pinned Git commit by headless Anki services.
+2. The add-on root is an optional desktop bridge. It packages the same library
+   for ordinary Anki installation and exposes the curated operations to local
+   agents through AnkiConnect and, optionally, MCP.
+
+CWYC users do not need the bridge for CWYC itself. Install the bridge when an
+agent outside CWYC should be able to apply these operations to the open desktop
+collection.
+
 ## One core, three adapters
 
 <p align="center">
@@ -67,6 +82,10 @@ result = fail_cards_now(
     event=EventRef(stream_id="my-addon", sequence=1, event_id="review-123"),
 )
 ```
+
+An add-on that vendors the library should use its own private package path
+instead. The global `anki_safe_collection_operations` alias is registered only
+by the installed desktop bridge, so a vendored copy cannot impersonate it.
 
 ### AnkiConnect
 

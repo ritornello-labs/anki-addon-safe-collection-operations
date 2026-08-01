@@ -30,23 +30,33 @@ This add-on packages narrow, high-value operations as one audited layer:
 - stable result shapes that surface surprising state;
 - thin adapters for other add-ons, AnkiConnect, and optional MCP clients.
 
-## First capability: fail any card safely
+## First capability: grade any card safely
 
-`fail_cards_now` records an honest native **Again** review even when the card is
-not due today.
+`grade_cards_now` records an honest native review — **again**, **hard**,
+**good**, or **easy** — even when the card is not due today. `fail_cards_now`
+is the same operation pinned to `again`, kept as the original entry point.
 
 | Starting state | Native behavior |
 |---|---|
-| Normal or future card | Browser-grade `Grade Now → Again` |
-| Rescheduling filtered deck | One native `Again` in place |
-| Preview filtered deck | Native `Easy` exits only the target preview, then native `Again` at home |
-| Suspended | Record the failure, then restore suspension |
-| Manually buried | Record the failure, then restore manual burial |
-| Sibling-buried | Record the failure, then restore scheduler burial |
+| Normal or future card | Browser-grade `Grade Now → <rating>` |
+| Rescheduling filtered deck | One native rating in place |
+| Preview filtered deck | Native `Easy` exits only the target preview, then the requested rating at home |
+| Suspended | Record the review, then restore suspension |
+| Manually buried | Record the review, then restore manual burial |
+| Sibling-buried | Record the review, then restore scheduler burial |
 
-The result explicitly lists preserved suspension and burial. Clients should
-tell the user and offer `make_cards_available`, which removes the hidden state
-without erasing the recorded failure.
+The rating is the only thing that varies: every guarantee is about what must
+*not* change around the write, so the revlog-count, `reps + 1`, and
+hidden-queue postconditions are identical whichever rating is requested. The
+preliminary `Easy` on a preview card is a mechanism for sending it home, not a
+grade anyone chose. An unparseable or out-of-range rating is rejected before
+the backend is touched, and a transport call that omits `rating` entirely is
+refused rather than defaulted to `again` — a grading call that does not say
+what it records should not run.
+
+The result explicitly lists the rating written plus preserved suspension and
+burial. Clients should tell the user and offer `make_cards_available`, which
+removes the hidden state without erasing the recorded review.
 
 ## Library first, optional desktop bridge
 

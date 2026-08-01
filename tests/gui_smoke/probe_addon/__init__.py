@@ -22,6 +22,7 @@ def run_checks() -> dict[str, object]:
         OperationError,
         Target,
         fail_cards_now,
+        grade_cards_now,
         make_cards_available,
     )
 
@@ -138,6 +139,34 @@ def run_checks() -> dict[str, object]:
             }
         )
 
+    # Every non-Again rating, against the real scheduler. The unit lane uses a
+    # test double whose grade_now we wrote ourselves, so only this proves that
+    # Anki actually records the rating we asked for and still counts exactly
+    # one review per card.
+    rating_results = []
+    for index, rating in enumerate(("hard", "good", "easy")):
+        rating_note, rating_id = add_card(f"rating {rating}")
+        reps_start = int(col.get_card(rating_id).reps)
+        outcome = grade_cards_now(
+            col,
+            [Target(card_id=rating_id, note_guid=rating_note.guid)],
+            rating=rating,
+            event=EventRef("workbench-ratings", index + 1, f"rating-{rating}"),
+        )
+        entry = col.db.first(
+            "select ease from revlog where cid = ? order by id desc limit 1",
+            rating_id,
+        )
+        rating_results.append(
+            {
+                "rating": rating,
+                "reported": outcome.rating.name.lower(),
+                # Anki's revlog stores ease 1-4; our Rating enum is 0-3.
+                "revlog_ease": int(entry[0]) if entry else None,
+                "reps_delta": int(col.get_card(rating_id).reps) - reps_start,
+            }
+        )
+
     rollback_note, rollback_id = add_card("rollback")
     rollback_reps = int(col.get_card(rollback_id).reps)
     rollback_revlogs = int(
@@ -165,7 +194,18 @@ def run_checks() -> dict[str, object]:
         col.db.scalar("select count() from revlog where cid = ?", rollback_id)
     )
 
+    expected_ease = {"hard": 2, "good": 3, "easy": 4}
     checks = [
+        {
+            "name": "each rating is recorded natively, one review each",
+            "ok": all(
+                entry["reported"] == entry["rating"]
+                and entry["reps_delta"] == 1
+                and entry["revlog_ease"] == expected_ease[entry["rating"]]
+                for entry in rating_results
+            ),
+            "results": rating_results,
+        },
         {
             "name": "native Again changes reps once",
             "ok": int(after.reps) == reps_before + 1,

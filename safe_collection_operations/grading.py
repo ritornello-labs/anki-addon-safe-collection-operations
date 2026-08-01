@@ -281,11 +281,36 @@ def fail_cards_now(
 ) -> GradingResult:
     """Record native Again ratings on arbitrary cards in one guarded operation.
 
+    Retained as the original entry point, and the name every existing transport
+    advertises; identical to ``grade_cards_now(..., rating=Rating.AGAIN)``.
+    """
+
+    return grade_cards_now(col, targets, rating=Rating.AGAIN, event=event)
+
+
+def grade_cards_now(
+    col: Any,
+    targets: Sequence[Target | dict[str, Any] | int],
+    *,
+    rating: Rating | int | str = Rating.AGAIN,
+    event: EventRef | None = None,
+) -> GradingResult:
+    """Record a native rating on arbitrary cards in one guarded operation.
+
     Run on Anki's main thread. Event-driven callers must provide an EventRef and
     note GUIDs. An explicit local add-on action may omit the event, accepting
     that cross-process retry idempotency is then unavailable.
+
+    The rating is the ONLY thing that varies. Every guarantee this operation
+    makes is rating-independent, because each one is about what must *not*
+    change around the write: preview-filtered cards still take a preliminary
+    Easy to exit the preview deck (a mechanism for sending them home, not a
+    grade anyone chose) before the requested rating is recorded; suspension and
+    burial are still preserved and reported; and the revlog-count, reps+1, and
+    hidden-queue postconditions still run unchanged.
     """
 
+    grade = Rating.from_value(rating)
     normalized = _unique_targets(targets)
     if event is not None:
         event.validate()
@@ -314,7 +339,9 @@ def fail_cards_now(
     def apply() -> None:
         nonlocal undo_steps, undo_target
         if event is not None and _event_is_already_applied(col, event):
-            result_box["result"] = GradingResult(card_ids=card_ids, already_applied=True)
+            result_box["result"] = GradingResult(
+                card_ids=card_ids, rating=grade, already_applied=True
+            )
             return
 
         cards = _preflight_cards(col, normalized, require_note_guids=event is not None)
@@ -338,7 +365,7 @@ def fail_cards_now(
                 increment_undo,
             )
         _native_operation(
-            lambda: backend_grade(card_ids=list(card_ids), rating=Rating.AGAIN),
+            lambda: backend_grade(card_ids=list(card_ids), rating=grade),
             increment_undo,
         )
 
@@ -424,6 +451,7 @@ def fail_cards_now(
 
         result_box["result"] = GradingResult(
             card_ids=card_ids,
+            rating=grade,
             preview_exits=preview_ids,
             rescheduling_filtered=rescheduling_ids,
             preserved_suspended=suspended_ids,

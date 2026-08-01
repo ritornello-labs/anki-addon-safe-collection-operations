@@ -1,6 +1,6 @@
 [project]
 name = "anki-addon-safe-collection-operations"
-version = "0.1.0"
+version = "0.2.0"
 description = "Guarded native collection operations for Anki add-ons and local agent integrations"
 readme = "README.md"
 requires-python = ">=3.10"

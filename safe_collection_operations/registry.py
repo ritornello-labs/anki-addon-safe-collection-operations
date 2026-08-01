@@ -5,7 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
-from .grading import fail_cards_now, get_grading_cursor, inspect_cards, make_cards_available
+from .grading import (
+    fail_cards_now,
+    get_grading_cursor,
+    grade_cards_now,
+    inspect_cards,
+    make_cards_available,
+)
 from .models import EventRef, OperationError, Target
 
 
@@ -57,6 +63,7 @@ def _capabilities(_col: Any, _arguments: Mapping[str, Any]) -> dict[str, Any]:
             "inspect_cards",
             "get_grading_cursor",
             "fail_cards_now",
+            "grade_cards_now",
             "make_cards_available",
         ],
         "minimum_anki": "25.07",
@@ -64,7 +71,7 @@ def _capabilities(_col: Any, _arguments: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _fail_cards_now(col: Any, arguments: Mapping[str, Any]) -> dict[str, Any]:
+def _grading_arguments(arguments: Mapping[str, Any]) -> tuple[list[Target], EventRef]:
     raw_targets = arguments.get("targets")
     if not isinstance(raw_targets, list):
         raise OperationError("targets must be an array")
@@ -72,8 +79,23 @@ def _fail_cards_now(col: Any, arguments: Mapping[str, Any]) -> dict[str, Any]:
     raw_event = arguments.get("event")
     if not isinstance(raw_event, Mapping):
         raise OperationError("event is required for transport-originated grading")
-    event = EventRef.from_mapping(raw_event)
+    return targets, EventRef.from_mapping(raw_event)
+
+
+def _fail_cards_now(col: Any, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    targets, event = _grading_arguments(arguments)
     return fail_cards_now(col, targets, event=event).to_dict()
+
+
+def _grade_cards_now(col: Any, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    targets, event = _grading_arguments(arguments)
+    # Absent rather than defaulted: a grading call that does not say what it is
+    # recording should be a rejected call, not an implicit Again.
+    if "rating" not in arguments:
+        raise OperationError("rating is required (again, hard, good, or easy)")
+    return grade_cards_now(
+        col, targets, rating=arguments["rating"], event=event
+    ).to_dict()
 
 
 def _inspect_cards(col: Any, arguments: Mapping[str, Any]) -> dict[str, Any]:
@@ -177,6 +199,58 @@ def build_registry() -> OperationRegistry:
                 "required": ["targets", "event"],
             },
             handler=_fail_cards_now,
+            writes=True,
+        )
+    )
+    registry.register(
+        OperationSpec(
+            name="grade_cards_now",
+            description=(
+                "Record a native rating (again, hard, good, or easy) on exact "
+                "cards, including future and filtered-deck cards. Identical to "
+                "fail_cards_now in every guarantee it makes - only the recorded "
+                "rating differs. Preserve existing suspension/burial and return "
+                "that state so the caller can tell the user and offer to remove it."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "targets": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "card_id": {"type": "integer"},
+                                "note_guid": {"type": "string"},
+                            },
+                            "required": ["card_id", "note_guid"],
+                        },
+                    },
+                    "rating": {
+                        "description": (
+                            "again, hard, good, or easy (or 0-3). Required: a "
+                            "grading call that does not say what it records is "
+                            "rejected rather than defaulted."
+                        ),
+                        "oneOf": [
+                            {"type": "string", "enum": ["again", "hard", "good", "easy"]},
+                            {"type": "integer", "minimum": 0, "maximum": 3},
+                        ],
+                    },
+                    "event": {
+                        "type": "object",
+                        "properties": {
+                            "stream_id": {"type": "string"},
+                            "sequence": {"type": "integer", "minimum": 1},
+                            "event_id": {"type": "string"},
+                        },
+                        "required": ["stream_id", "sequence", "event_id"],
+                    },
+                },
+                "required": ["targets", "rating", "event"],
+            },
+            handler=_grade_cards_now,
             writes=True,
         )
     )

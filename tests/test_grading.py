@@ -11,6 +11,7 @@ from safe_collection_operations.grading import (
     CURSOR_CONFIG_KEY,
     fail_cards_now,
     get_grading_cursor,
+    grade_cards_now,
     inspect_cards,
     make_cards_available,
 )
@@ -93,13 +94,22 @@ class FakeBackend:
             preview = bool(deck and deck.get("dyn") and not deck.get("resched", True))
             self.col.revlog.append(card_id)
             if int(rating) == Rating.EASY and preview:
+                # Ending a preview returns the card home WITHOUT counting a
+                # review - which is why the core expects one extra revlog entry
+                # but still exactly reps+1 for a preview card.
                 card.did = card.odid
                 card.odid = 0
                 if card.queue >= 0:
                     card.queue = 2
-            elif int(rating) == Rating.AGAIN:
+            else:
+                # Every real rating counts a review. This used to fire only for
+                # AGAIN, which was indistinguishable from correct while AGAIN
+                # was the only rating the core could record.
                 card.reps += 2 if self.wrong_reps else 1
-                card.queue = -1 if card_id in self.leech_ids else 1
+                if card_id in self.leech_ids:
+                    card.queue = -1
+                else:
+                    card.queue = 1 if int(rating) == Rating.AGAIN else 2
         self.col._push_undo()
 
     def restore_buried_and_suspended_cards(self, card_ids: list[int]) -> None:
@@ -347,6 +357,119 @@ class NativeGradingTests(unittest.TestCase):
                 }
             ],
         )
+
+
+class RatingSelectionTests(unittest.TestCase):
+    """grade_cards_now generalises the rating and nothing else.
+
+    Every guarantee this operation makes is about what must NOT change around
+    the write, so each one is re-asserted here under a non-Again rating rather
+    than assumed to carry over.
+    """
+
+    def test_each_rating_is_recorded_natively(self) -> None:
+        for rating in (Rating.AGAIN, Rating.HARD, Rating.GOOD, Rating.EASY):
+            col = FakeCol()
+            col.add_card(FakeCard(101, 201, reps=7))
+
+            result = grade_cards_now(col, [101], rating=rating)
+
+            self.assertEqual(col._backend.calls, [((101,), rating)])
+            self.assertEqual(result.rating, rating)
+            self.assertEqual((col.cards[101].reps, col.revlog), (8, [101]))
+
+    def test_fail_cards_now_still_means_again(self) -> None:
+        """The original entry point is what every existing transport calls."""
+        col = FakeCol()
+        col.add_card(FakeCard(101, 201))
+
+        result = fail_cards_now(col, [101])
+
+        self.assertEqual(col._backend.calls, [((101,), Rating.AGAIN)])
+        self.assertEqual(result.rating, Rating.AGAIN)
+
+    def test_preview_exit_is_still_easy_then_the_requested_rating(self) -> None:
+        """The preliminary Easy sends a preview card home; it is a mechanism,
+        not a grade anyone chose, so it stays Easy whatever was requested."""
+        col = FakeCol()
+        col.add_card(FakeCard(101, 201, did=2, odid=1))
+
+        result = grade_cards_now(col, [101], rating=Rating.GOOD)
+
+        self.assertEqual(
+            col._backend.calls, [((101,), Rating.EASY), ((101,), Rating.GOOD)]
+        )
+        self.assertEqual(result.preview_exits, (101,))
+        self.assertEqual((col.cards[101].did, col.cards[101].odid), (1, 0))
+
+    def test_hidden_state_is_preserved_under_a_non_again_rating(self) -> None:
+        col = FakeCol()
+        col.add_card(FakeCard(101, 201, queue=-1))  # suspended
+        col.add_card(FakeCard(102, 202, queue=-3))  # user-buried
+
+        result = grade_cards_now(col, [101, 102], rating=Rating.EASY)
+
+        self.assertEqual(result.preserved_suspended, (101,))
+        self.assertEqual(result.preserved_user_buried, (102,))
+        self.assertEqual(col.cards[101].queue, -1)
+        self.assertEqual(col.cards[102].queue, -3)
+
+    def test_result_reports_the_rating_it_wrote(self) -> None:
+        """A result that does not say what it recorded cannot be audited."""
+        col = FakeCol()
+        col.add_card(FakeCard(101, 201))
+
+        payload = grade_cards_now(col, [101], rating="hard").to_dict()
+
+        self.assertEqual(payload["rating"], "hard")
+
+    def test_rating_accepts_names_and_integers(self) -> None:
+        for value, expected in (
+            ("again", Rating.AGAIN),
+            ("Good", Rating.GOOD),
+            (" easy ", Rating.EASY),
+            (0, Rating.AGAIN),
+            (3, Rating.EASY),
+            (Rating.HARD, Rating.HARD),
+        ):
+            self.assertEqual(Rating.from_value(value), expected)
+
+    def test_bad_ratings_are_rejected_before_the_backend(self) -> None:
+        col = FakeCol()
+        col.add_card(FakeCard(101, 201))
+        for value in (4, -1, "excellent", None, 1.5, True):
+            with self.assertRaises(OperationError, msg=f"{value!r} should be rejected"):
+                grade_cards_now(col, [101], rating=value)
+        self.assertEqual(col._backend.calls, [], "nothing should have been graded")
+
+    def test_registry_requires_an_explicit_rating(self) -> None:
+        """An unstated rating is a rejected call, not an implicit Again."""
+        from safe_collection_operations.registry import build_registry
+
+        col = FakeCol()
+        col.add_card(FakeCard(101, 201))
+        registry = build_registry()
+        arguments = {
+            "targets": [{"card_id": 101, "note_guid": col.get_note(201).guid}],
+            "event": {"stream_id": "s", "sequence": 1, "event_id": "e1"},
+        }
+        with self.assertRaises(OperationError) as ctx:
+            registry.execute(col, "grade_cards_now", arguments)
+        self.assertIn("rating is required", str(ctx.exception))
+
+        payload = registry.execute(col, "grade_cards_now", {**arguments, "rating": "good"})
+        self.assertEqual(payload["rating"], "good")
+        self.assertEqual(col._backend.calls, [((101,), Rating.GOOD)])
+
+    def test_grade_cards_now_is_in_the_advertised_surface(self) -> None:
+        from safe_collection_operations.registry import build_registry
+
+        registry = build_registry()
+        names = {spec.name for spec in registry.specs()}
+        self.assertIn("grade_cards_now", names)
+        self.assertIn("fail_cards_now", names)
+        payload = registry.execute(FakeCol(), "capabilities", {})
+        self.assertIn("grade_cards_now", payload["operations"])
 
 
 if __name__ == "__main__":

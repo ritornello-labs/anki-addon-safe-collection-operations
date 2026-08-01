@@ -9,3 +9,4 @@ dist/
 user_files/
 meta.json
 
+.tmp/

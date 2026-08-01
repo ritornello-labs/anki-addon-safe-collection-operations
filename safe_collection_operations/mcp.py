@@ -151,7 +151,7 @@ class MCPServer:
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {
                     "name": "anki-safe-collection-operations",
-                    "version": "0.1.0",
+                    "version": "0.2.0",
                 },
             }
             return {"jsonrpc": "2.0", "id": request_id, "result": result}

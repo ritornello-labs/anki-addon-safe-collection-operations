@@ -25,6 +25,37 @@ class Rating(IntEnum):
     GOOD = 2
     EASY = 3
 
+    @classmethod
+    def from_value(cls, value: Any) -> "Rating":
+        """Accept the enum, its integer, or its name.
+
+        Transports carry JSON, so a rating arrives as `2` or `"good"`. Parsing
+        it here keeps every transport agreeing on the same vocabulary, and
+        makes an out-of-range integer a clean OperationError instead of
+        whatever the backend does with an unknown rating.
+        """
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, bool):  # bool is an int; never a rating
+            raise OperationError(f"invalid rating: {value!r}")
+        if isinstance(value, int):
+            try:
+                return cls(value)
+            except ValueError:
+                raise OperationError(
+                    f"rating {value} is out of range; valid: "
+                    f"{[member.value for member in cls]}"
+                ) from None
+        if isinstance(value, str):
+            try:
+                return cls[value.strip().upper()]
+            except KeyError:
+                raise OperationError(
+                    f"unknown rating {value!r}; valid: "
+                    f"{[member.name.lower() for member in cls]}"
+                ) from None
+        raise OperationError(f"invalid rating: {value!r}")
+
 
 @dataclass(frozen=True)
 class EventRef:
@@ -95,6 +126,9 @@ class Target:
 @dataclass(frozen=True)
 class GradingResult:
     card_ids: tuple[int, ...]
+    # Which rating was actually recorded. Callers surface this to users, and a
+    # result that does not say what it wrote cannot be audited.
+    rating: Rating = Rating.AGAIN
     already_applied: bool = False
     preview_exits: tuple[int, ...] = ()
     rescheduling_filtered: tuple[int, ...] = ()
@@ -107,6 +141,7 @@ class GradingResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "card_ids": list(self.card_ids),
+            "rating": self.rating.name.lower(),
             "already_applied": self.already_applied,
             "preview_exits": list(self.preview_exits),
             "rescheduling_filtered": list(self.rescheduling_filtered),

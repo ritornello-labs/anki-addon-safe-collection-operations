@@ -5,6 +5,7 @@ from __future__ import annotations
 from .grading import (
     CURSOR_CONFIG_KEY,
     fail_cards_now,
+    grade_cards_now,
     get_grading_cursor,
     inspect_cards,
     make_cards_available,
@@ -32,9 +33,10 @@ __all__ = [
     "Target",
     "build_registry",
     "fail_cards_now",
+    "grade_cards_now",
     "get_grading_cursor",
     "inspect_cards",
     "make_cards_available",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

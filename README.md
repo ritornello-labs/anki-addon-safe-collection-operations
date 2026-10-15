@@ -1,4 +1,6 @@
 <p align="center">
+
+[Explore all Ritornello decks and add-ons](https://ritornello.dev/).
   <img src="docs/assets/hero.svg" alt="Safe Collection Operations for Anki Add-ons" width="100%">
 </p>
 
@@ -145,3 +147,5 @@ Early public alpha. The operation surface is intentionally small while the
 transaction, filtered-deck, undo, and transport behavior receives real-Anki
 coverage. New operations are added for concrete consumers, not to mirror all of
 Anki or AnkiConnect.
+
+Support continued development: [ritornello.dev/support](https://ritornello.dev/support).
